@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Broker Trade Portal - LSE</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- ===== BASIC UI ===== -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 25px;
+            background: #f5f5f5;
+        }
+
+        h2 {
+            color: #003366;
+        }
+
+        .section {
+            background: #fff;
+            margin-top: 25px;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 10px;
+            background: white;
+        }
+
+        th, td {
+            border: 1px solid #ccc;
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background: #003366;
+            color: white;
+        }
+
+        tr:nth-child(even) {
+            background: #f0f6ff;
+        }
+
+        .btn {
+            padding: 6px 14px;
+            cursor: pointer;
+            border-radius: 4px;
+            border: none;
+        }
+
+        .btn-primary {
+            background: #007bff;
+            color: white;
+        }
+
+        .btn-danger {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>Broker Trading Portal - London Stock Exchange</h2>
+
+    <!-- ================= LOGIN ======================== -->
+    <div id="loginSection" class="section">
+        <h3>Login</h3>
+        <input id="username" placeholder="Username (email)" /><br><br>
+        <input id="password" placeholder="Password" type="password" /><br><br>
+        <button class="btn btn-primary" onclick="login()">Login</button>
+        <p id="loginStatus"></p>
+    </div>
+
+    <!-- ================= DASHBOARD ==================== -->
+    <div id="dashboard" class="section" style="display:none;">
+        <h3>Dashboard</h3>
+        <button class="btn btn-secondary" onclick="logout()">Logout</button>
+
+        <!-- ===== Ticker List ===== -->
+        <h4>Available Tickers</h4>
+        <button class="btn btn-secondary" onclick="loadTickers()">Reload Tickers</button>
+        <div id="tickers"></div>
+
+        <!-- ===== Latest Price ===== -->
+        <h4>Latest Price</h4>
+        <input id="priceTicker" placeholder="LSE:VOD" />
+        <button class="btn btn-secondary" onclick="getPrice()">Get Price</button>
+        <table id="priceTable"></table>
+
+        <!-- ===== Trade Actions ===== -->
+        <h4>Place Trade</h4>
+        <label>Ticker:</label> <input id="tradeTicker" placeholder="LSE:VOD" /><br><br>
+        <label>BrokerId:</label> <input id="tradeBroker" placeholder="BRK-JPM" /><br><br>
+        <label>Price:</label> <input id="tradePrice" type="number" step="0.0001" placeholder="250.50" /><br><br>
+        <label>Quantity:</label> <input id="tradeQty" type="number" placeholder="100" /><br><br>
+        <button class="btn btn-primary" onclick="buyTrade()">BUY</button>
+        <button class="btn btn-danger" onclick="sellTrade()">SELL</button>
+        <p id="tradeStatus"></p>
+
+        <!-- ===== Latest trades ===== -->
+        <h4>Latest Trades (Auto Refresh)</h4>
+        <button class="btn btn-secondary" onclick="loadTrades()">Manual Refresh</button>
+        <table id="tradeTable"></table>
+    </div>
+
+    <!-- ================= SIGNALR LIB ======================= -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/7.0.5/signalr.min.js"></script>
+
+    <!-- ================= SCRIPT ======================= -->
+    <script>
+        const API_BASE = "https://localhost:7254/api/v1";
+        let token = null;
+        let connection = null;
+
+        /* ===================================================
+           LOGIN
+        =================================================== */
+        async function login() {
+            const body = {
+                userName: document.getElementById("username").value,
+                password: document.getElementById("password").value
+            };
+
+            const response = await fetch(`${API_BASE}/auth/BrokerLogin`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+            });
+
+            if (response.status !== 200) {
+                document.getElementById("loginStatus").innerText = "Invalid credentials";
+                return;
+            }
+
+            const data = await response.json();
+            token = data.jwtToken;
+
+            document.getElementById("loginSection").style.display = "none";
+            document.getElementById("dashboard").style.display = "block";
+
+            await startSignalR();    // <---- start realtime connection here
+            loadTickers();
+            loadTrades();
+        }
+
+        function logout() {
+            token = null;
+            if (connection) connection.stop();
+            document.getElementById("dashboard").style.display = "none";
+            document.getElementById("loginSection").style.display = "block";
+        }
+
+        /* ===================================================
+           API HELPERS
+        =================================================== */
+        async function apiGet(path) {
+            const response = await fetch(`${API_BASE}${path}`, {
+                method: "GET",
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            if (response.status === 401) { logout(); return null; }
+            if (response.status === 404) { return null; }
+            return response.json();
+        }
+
+        async function apiPost(path, bodyObj) {
+            const response = await fetch(`${API_BASE}${path}`, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token}`,
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(bodyObj)
+            });
+            if (response.status === 401) { logout(); return null; }
+            return response.text();
+        }
+
+        /* ===================================================
+           STOCKS
+        =================================================== */
+        async function loadTickers() {
+            const data = await apiGet("/stocks");
+            if (!data) return;
+            let html = "<ul>";
+            data.forEach(s => html += `<li>${s.ticker} - ${s.companyName}</li>`);
+            html += "</ul>";
+            document.getElementById("tickers").innerHTML = html;
+        }
+
+        async function getPrice() {
+            const ticker = document.getElementById("priceTicker").value.trim();
+            const data = await apiGet(`/stocks/${ticker}`);
+            if (!data) { alert("Not found"); return; }
+            document.getElementById("priceTable").innerHTML = `
+            <tr><th>Ticker</th><th>Price</th><th>Currency</th><th>Value Time</th></tr>
+            <tr>
+                <td>${data.ticker}</td>
+                <td>${data.price}</td>
+                <td>${data.currency}</td>
+                <td>${data.priceValueAt}</td>
+            </tr>`;
+        }
+
+        /* ===================================================
+           TRADES
+        =================================================== */
+        async function loadTrades() {
+            const data = await apiGet(`/trades?page=1&pageSize=15`);
+            if (!data) return;
+            let rows = `
+          <tr>
+            <th>Ticker</th><th>Name</th><th>Broker</th>
+            <th>Currency</th><th>Side</th><th>Price</th>
+            <th>Qty</th><th>ExecutedAt</th>
+          </tr>`;
+            data.forEach(t => rows += `
+          <tr>
+            <td>${t.ticker}</td>
+            <td>${t.stockName}</td>
+            <td>${t.brokerId} - ${t.brokerName}</td>
+            <td>${t.currency}</td>
+            <td>${t.side}</td>
+            <td>${t.price}</td>
+            <td>${t.quantity}</td>
+            <td>${t.executedAt}</td>
+          </tr>`);
+            document.getElementById("tradeTable").innerHTML = rows;
+        }
+
+        async function buyTrade() {
+            const dto = getTradeDto();
+            const msg = await apiPost("/trades/buy", dto);
+            document.getElementById("tradeStatus").innerText = msg;
+        }
+
+        async function sellTrade() {
+            const dto = getTradeDto();
+            const msg = await apiPost("/trades/sell", dto);
+            document.getElementById("tradeStatus").innerText = msg;
+        }
+
+        function getTradeDto() {
+            return {
+                ticker: document.getElementById("tradeTicker").value.trim(),
+                brokerId: document.getElementById("tradeBroker").value.trim(),
+                price: parseFloat(document.getElementById("tradePrice").value),
+                quantity: parseInt(document.getElementById("tradeQty").value)
+            };
+        }
+
+        /* ===================================================
+           SIGNALR REALTIME
+        =================================================== */
+        async function startSignalR() {
+            connection = new signalR.HubConnectionBuilder()
+                .withUrl("https://localhost:7254/realtime/trades", {
+                    accessTokenFactory: () => token
+                })
+                .withAutomaticReconnect()
+                .build();
+
+            connection.on("TradeExecuted", async (trade) => {
+                console.log("NEW TRADE EVENT:", trade);
+                await loadTrades();   // <---- AUTO REFRESH ONLY TRADES TABLE
+            });
+
+            await connection.start();
+            console.log("SignalR connected");
+        }
+    </script>
+
+</body>
+</html>

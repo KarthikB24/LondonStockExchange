@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/Solution Items/">
+    <File Path="../LondonStockExchangeLogin.html" />
+    <File Path="../LSE V1 KB 29122025.sql" />
+    <File Path="Readme.txt" />
+  </Folder>
+  <Project Path="LSE.Application/LSE.Application.csproj" />
+  <Project Path="LSE.Domain/LSE.Domain.csproj" />
+  <Project Path="LSE.Infrastructure/LSE.Infrastructure.csproj" />
+  <Project Path="LSE.StocksAPI/LSE.StocksAPI.csproj" />
+  <Project Path="LSE.UnitTests/LSE.UnitTests.csproj" Id="c2998c2f-3c24-4346-8631-8bd5b83cac55" />
+</Solution>
